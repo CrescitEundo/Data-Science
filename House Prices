@@ -1,0 +1,129 @@
+import numpy as np
+import pandas as pd
+from pandas.api.types import is_string_dtype, is_numeric_dtype
+
+import csv
+
+from sklearn import preprocessing
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split, KFold
+#from sklearn.metrics import accuracy_score <<< only for classification problems
+from sklearn.metrics import mean_squared_error as skmse
+
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+train = pd.DataFrame(pd.read_csv('/kaggle/input/house-prices-advanced-regression-techniques/train.csv'))                    # train.shape = (1460,81)
+test = pd.DataFrame(pd.read_csv('/kaggle/input/house-prices-advanced-regression-techniques/test.csv'))                      # test.shape = (1459, 80)
+metadata = open('../input/house-prices-advanced-regression-techniques/sample_submission.csv', 'r')                          # 
+submission = pd.DataFrame(pd.read_csv('/kaggle/input/house-prices-advanced-regression-techniques/sample_submission.csv'))   # submisison.shape = (1459, 2)
+
+train.info()
+
+#*** visualize correlation matrix
+#*** compute corr matrix
+corr = train.corr()
+
+#*** generate a mask for the upper triangle
+mask = np.triu(np.ones_like(corr, dtype=bool))
+
+#*** Setting up matplotlib figure
+f, ax = plt.subplots(figsize=(11, 9))
+
+#*** Generate a custom diverging colormap
+cmap = sns.diverging_palette(230, 20, as_cmap=True)
+
+sns.heatmap(corr, mask=mask, cmap=cmap, vmax=1, center=0, square=True, linewidths=.5, cbar_kws={'shrink': .5})
+
+#*** Feature extraction
+arr = list()
+featarr = list()
+for f in range(len(corr['SalePrice'])-1):
+    arr.append(corr['SalePrice'][f])
+mean = np.mean(arr)
+keys = list(corr.keys())
+for i in range(len(arr)):
+     if arr[i] > mean:
+            featarr.append(keys[i])
+
+def fillna(df):
+    for i in df.columns:
+        if is_numeric_dtype(df[i]):
+            df[i] = df[i].fillna(np.mean(df[i]))
+        else:
+            df[i] = df[i].fillna("NO DATA")
+    return df
+
+#*** preprocess data and convert them to numericals
+def encode_features(train, test):
+    train_keys = list(train.keys())
+    test_keys = list(test.keys())
+    common_keys = [i for i in train_keys if i in test_keys]
+
+    df_combined = pd.concat([train[common_keys], test[common_keys]])
+    
+    for feature in common_keys:
+        le = preprocessing.LabelEncoder()
+        le = le.fit(df_combined[feature])
+        train[feature] = le.transform(train[feature])
+        test[feature] = le.transform(test[feature])
+            
+    return train, test
+
+train = fillna(train)
+test = fillna(test)
+train, test = encode_features(train, test)
+
+#*** splitting training and test sets
+X_all = train.filter(items=featarr)
+y_all = train['SalePrice']
+
+#*** splitting train data into train and test data
+num_test = 0.2
+X_train, X_test, y_train, y_test = train_test_split(X_all, y_all, test_size=num_test, random_state=23)
+
+featarr
+
+#*** Linear Regression model initiation
+linreg = LinearRegression().fit(X_train, y_train)
+#*** 
+linreg.score(X_train, y_train)
+#*** Coefficients of linear regression equation
+linreg.coef_
+#*** Coefficient 0 (y-intercept)
+linreg.intercept_
+#*** predictions of test data obtained from train data split
+predictions = linreg.predict(X_test)
+
+#*** model accuracy calculate with Mean Squared Error
+model_mse = skmse(y_test, predictions)
+
+#*** model validation
+
+def run_kfold(linreg):
+    kf = KFold(n_splits=10)
+    outcomes = []
+    fold = 0
+    for train_index, test_index in kf.split(train):
+        fold += 1
+        X_train, X_test = X_all.values[train_index], X_all.values[test_index]
+        y_train, y_test = y_all.values[train_index], y_all.values[test_index]
+        linreg.fit(X_train, y_train)
+        predictions = linreg.predict(X_test)
+        accuracy = skmse(y_test, predictions)
+        outcomes.append(accuracy)
+        print("Fold {0} accuracy: {1}".format(fold, accuracy))
+    mean_outcome = np.mean(outcomes)
+    print("Mean accuracy: {0}".format(mean_outcome))
+
+run_kfold(linreg)
+
+#*** predicting the actual test data
+
+ids = test['Id']
+ids = ids + 1
+test2 = test.filter(items=featarr)
+
+a_predictions = linreg.predict(test2)
+output = pd.DataFrame({'Id': ids, 'SalePrice': a_predictions})
+output.to_csv('house_prices_predictions.csv', index=False)
